@@ -99,6 +99,29 @@ python -m primenet.evaluate runs/<timestamp>/model.pt
 - OOD degradation on the far range tells you whether the model learned *arithmetic*
   (scale-invariant modular structure) or *statistics of the training range*.
 
+## Tracking progress across runs (mini ML Ops)
+
+Every training run appends a line to `runs/registry.jsonl` (config, throughput, final
+validation KPIs); every evaluation attaches its full KPIs to the matching record. The
+file is plain JSONL — rsync-able, git-diffable, one line per run.
+
+```bash
+python -m primenet.train  --tag "my-tweak" ...   # tag each experiment for the board
+python -m primenet.evaluate runs/<run>/model.pt  # attaches eval KPIs to the record
+python -m primenet.board                         # table + runs/progress/progress.png
+python -m primenet.board --backfill              # one-time import of pre-registry runs
+```
+
+The board prints a table (prime precision with Δ vs previous run, OOD precision, prime
+recall, composite recall, FP median smallest factor, throughput) and renders four charts
+against the residue-rule reference: prime precision (in-dist + OOD), prime recall,
+composite recall, and FP anatomy on a log scale.
+
+Smoke runs are tracked but hidden from the board by default (`--include-smoke` to show
+them). Runs from other machines (e.g. the VPS) merge cleanly: rsync their `runs/` over,
+delete duplicate `run_id` lines, and re-run the board. If you later outgrow this,
+`pip install mlflow && mlflow ui` is the standard upgrade path.
+
 ## Roadmap
 
 - [ ] Encoding ablation: binary vs residues vs Fourier vs all

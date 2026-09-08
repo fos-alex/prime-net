@@ -23,6 +23,7 @@ from .features import make_feature_fn
 from .metrics import format_metrics, prf
 from .model import build_model
 from .nt import factor_stats
+from .track import append_record, make_record, update_record
 from .train import predict_range
 
 
@@ -160,9 +161,30 @@ def main() -> None:
         k: {b: v2 for b, v2 in v.items() if b not in ("n", "y", "p", "residue_pred")}
         for k, v in results.items()
     }
+    fp_summary = {
+        k: {
+            "count": v["count"],
+            "median_smallest": int(np.median(v["smallest"])) if v["count"] else None,
+        }
+        for k, v in fp.items()
+    }
+    metrics_out["fp"] = fp_summary
     (out / "eval_metrics.json").write_text(json.dumps(metrics_out, indent=2))
     write_report(out, cfg, results, fp)
-    print(f"\nreport + plots written to {out}")
+
+    eval_record = {
+        "in_dist": results["in_dist"]["model"],
+        "ood": results["ood"]["model"],
+        "residue_rule": results["in_dist"]["residue_rule"],
+        "fp": fp_summary,
+    }
+    registry = Path("runs") / "registry.jsonl"
+    if not update_record(registry, out.name, {"eval": eval_record}):
+        stub = make_record(out.name, cfg, sum(p_.numel() for p_ in model.parameters()), None, None, None, None)
+        stub["eval"] = eval_record
+        append_record(registry, stub)
+    print(f"report + plots written to {out}")
+    print(f"eval KPIs attached to run {out.name} in {registry}")
 
 
 if __name__ == "__main__":

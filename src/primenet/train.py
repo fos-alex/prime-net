@@ -25,6 +25,7 @@ from .data import PrimeOracle, sample_batch
 from .features import BINARY_BITS, make_feature_fn
 from .metrics import format_metrics, prf
 from .model import build_model
+from .track import append_record, make_record
 
 
 def predict_range(
@@ -63,6 +64,7 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=4096)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--tag", default="", help="free-text label for the progress board (e.g. 'residues-only')")
     p.add_argument("--compile", action="store_true", help="torch.compile (slow warmup, faster steps)")
     p.add_argument("--out", default=None, help="output dir (default runs/<timestamp>)")
     p.add_argument("--smoke", action="store_true", help="tiny config, end-to-end in ~1 min")
@@ -101,6 +103,7 @@ def main() -> None:
 
     losses: list[float] = []
     val_history: list[dict] = []
+    total_samples, total_time = 0, 0.0
     for epoch in range(args.epochs):
         model.train()
         t0, seen = time.time(), 0
@@ -119,6 +122,8 @@ def main() -> None:
         yv, pv = predict_range(raw_model, oracle, feature_fn, args.val_min, args.val_max)
         vm = prf(yv, pv)
         val_history.append(vm)
+        total_samples += seen
+        total_time += time.time() - t0
         print(f"[val {args.val_min:,}-{args.val_max:,}] {format_metrics('model', vm)}")
 
     torch.save(
@@ -141,7 +146,17 @@ def main() -> None:
     ax.set(xlabel="step", ylabel="BCE loss", title="Training loss")
     fig.tight_layout()
     fig.savefig(out / "loss_curve.png", dpi=120)
+
+    sps = total_samples / total_time if total_time else None
+    append_record(
+        Path("runs") / "registry.jsonl",
+        make_record(
+            out.name, vars(args), n_params, total_samples, sps,
+            losses[-1] if losses else None, val_history[-1] if val_history else None, tag=args.tag,
+        ),
+    )
     print(f"saved checkpoint + metrics + loss_curve.png to {out}")
+    print(f"run tracked in runs/registry.jsonl (sps {sps:,.0f})" if sps else "run tracked in runs/registry.jsonl")
 
 
 if __name__ == "__main__":
