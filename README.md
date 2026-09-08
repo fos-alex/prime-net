@@ -44,7 +44,7 @@ residue-sieve baseline to see precisely what the network did and didn't learn.
                                 │  x ∈ R^{B×99}
                  ┌──────────────▼───────────────────────────────┐
                  │                model.py                      │
-                 │  MLP  99→128→128→64→1      (~25k params)     │
+                 │  MLP  99→128→128→64→1      (37,633 params)   │
                  │  or 1D-CNN over the feature axis             │
                  └──────────────┬───────────────────────────────┘
                                 │  logits
@@ -80,10 +80,16 @@ python -m primenet.evaluate runs/<timestamp>/model.pt
 
 ## Protocol
 
-- **Train** on `n ~ U[2, 8·10⁵]`
-- **Validate** each epoch on `[8·10⁵, 10⁶]`
-- **Test in-distribution** on `[10⁶, 1.2·10⁶]` — every integer, enumerated
-- **Test out-of-distribution** on `[5·10⁶, 5.2·10⁶]` — 6× beyond the training range
+- **Train** on `n ~ U[2, 7·10⁵]`
+- **Validate** each epoch on `[7·10⁵, 7.5·10⁵]` — held out, inside the training span
+- **Test in-distribution** on `[7.5·10⁵, 8·10⁵]` — a second held-out interval inside the
+  trained range; every integer enumerated. (Testing *inside* the trained span matters:
+  with binary features, ranges above 2²⁰ ≈ 1.05M light up bits the model has literally
+  never seen during training, which would confound "OOD degradation" with untrained
+  weights.)
+- **Near OOD**: `[10⁶, 1.2·10⁶]` — just beyond training, where unseen bits activate
+- **Far OOD**: `[5·10⁶, 5.2·10⁶]` — ~7× the training range; evaluation builds its own
+  sieve to cover whatever ranges are requested, independent of the training `--n-max`
 - **Baselines**: (1) the explicit residue rule "composite iff n mod p == 0 for p < 100",
   (2) predict-all-composite. If the network can't beat the residue rule, that *is* the
   result: it learned a sieve and nothing more.

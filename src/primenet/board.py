@@ -66,14 +66,15 @@ def print_table(records: list[dict]) -> None:
     print(f"\n{len(records)} run(s) tracked, {len(evaluated)} evaluated\n")
     header = (
         f"{'#':>2}  {'run':<15} {'label':<14} {'Msamp':>6} {'P_in':>6} {'dP':>7} "
-        f"{'P_ood':>6} {'R_in':>6} {'compR':>6} {'FPmed':>6} {'sps':>7}  host"
+        f"{'P_near':>6} {'P_far':>6} {'R_in':>6} {'compR':>6} {'FPmed':>6} {'sps':>7}  host"
     )
     print(header)
     print("-" * len(header))
     prev_p = None
     for i, r in enumerate(evaluated):
         e, m = r["eval"], r["eval"]["in_dist"]
-        o = e.get("ood") or {}
+        near = e.get("near_ood") or e.get("ood") or {}
+        far = e.get("far_ood") or {}
         fp = (e.get("fp") or {}).get("in_dist") or {}
         p = m["precision_prime"]
         dp = "-" if prev_p is None else f"{p - prev_p:+.3f}"
@@ -83,7 +84,9 @@ def print_table(records: list[dict]) -> None:
         fpmed = f"{fp['median_smallest']}" if fp.get("median_smallest") else "-"
         print(
             f"{i:>2}  {r['run_id']:<15} {run_label(r)[:14]:<14} {msamp:>6} {p:>6.3f} {dp:>7} "
-            f"{o.get('precision_prime', float('nan')):>6.3f} {m['recall_prime']:>6.3f} "
+            f"{near.get('precision_prime', float('nan')):>6.3f} "
+            f"{far.get('precision_prime', float('nan')):>6.3f} "
+            f"{m['recall_prime']:>6.3f} "
             f"{m['recall_composite']:>6.3f} {fpmed:>6} {sps:>7}  {r.get('host', '?')}"
         )
     unevaluated = [r for r in records if not (r.get("eval") and r["eval"].get("in_dist"))]

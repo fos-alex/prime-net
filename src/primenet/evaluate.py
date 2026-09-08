@@ -1,6 +1,8 @@
-"""Dissect a trained checkpoint: in-dist + OOD metrics, baselines, false-positive anatomy.
+"""Dissect a trained checkpoint: in-dist + near/far-OOD metrics, baselines, FP anatomy.
 
 Callable directly (CLI) or from train.py (automatic post-training evaluation).
+Builds its own sieve covering the evaluation ranges, independent of the
+training sieve bound.
 
 Example:
     python -m primenet.evaluate runs/20260907-101112/model.pt
@@ -27,6 +29,9 @@ from .model import build_model
 from .nt import factor_stats
 from .predict import predict_range
 from .track import append_record, make_record, update_record
+
+EVAL_KEYS = ("in_dist", "near_ood", "far_ood")
+RANGE_LABELS = {"in_dist": "In-distribution", "near_ood": "Near-OOD", "far_ood": "Far-OOD"}
 
 
 def load_model(path: Path):
@@ -72,16 +77,21 @@ def write_report(out: Path, cfg: dict, results: dict, fp: dict) -> None:
         f" | epochs {cfg['epochs']}",
         "",
     ]
-    for label, key in (("In-distribution", "in_dist"), ("Out-of-distribution", "ood")):
+    for key in EVAL_KEYS:
         r = results[key]
-        lines += [f"## {label} [{r['n'][0]:,}, {r['n'][-1]:,}]", "", "```"]
+        lines += [f"## {RANGE_LABELS[key]} [{r['n'][0]:,}, {r['n'][-1]:,}]", "", "```"]
         lines.append(format_metrics("model", r["model"]))
         lines.append(format_metrics("residue rule", r["residue_rule"]))
         lines.append(format_metrics("all-composite", r["all_composite"]))
         lines += ["```", ""]
 
     lines += ["## False positives (composite predicted prime)", ""]
-    for label, key in (("model in-dist", "in_dist"), ("model OOD", "ood"), ("residue rule in-dist", "residue_in_dist")):
+    for label, key in (
+        ("model in-dist", "in_dist"),
+        ("model near-OOD", "near_ood"),
+        ("model far-OOD", "far_ood"),
+        ("residue rule in-dist", "residue_in_dist"),
+    ):
         a = fp[key]
         lines.append(
             f"- **{label}**: {a['count']:,} FPs | median smallest factor "
@@ -94,47 +104,49 @@ def write_report(out: Path, cfg: dict, results: dict, fp: dict) -> None:
 
 def evaluate_checkpoint(
     checkpoint: Path,
-    in_dist: tuple[int, int] = (1_000_000, 1_200_000),
-    ood: tuple[int, int] = (5_000_000, 5_200_000),
+    in_dist: tuple[int, int] = (750_000, 800_000),
+    near_ood: tuple[int, int] = (1_000_000, 1_200_000),
+    far_ood: tuple[int, int] = (5_000_000, 5_200_000),
 ) -> dict:
-    """Evaluate a checkpoint on the given ranges; write artifacts + registry KPIs."""
+    """Evaluate a checkpoint on the three ranges; write artifacts + registry KPIs.
+
+    Ranges are validated and the label sieve is built to cover them, so eval is
+    independent of the training-time --n-max.
+    """
     out = checkpoint.parent
+    ranges = {"in_dist": in_dist, "near_ood": near_ood, "far_ood": far_ood}
+    for name, (lo, hi) in ranges.items():
+        if not (2 <= lo < hi):
+            raise SystemExit(f"invalid {name} range ({lo}, {hi}): need 2 <= start < end")
+
     model, cfg = load_model(checkpoint)
-    oracle = PrimeOracle(cfg["n_max"])
     feature_fn = make_feature_fn(cfg["features"])
-    print(f"loaded {checkpoint} (features={feature_fn.names}, model={cfg['model']})")
+    eval_n_max = max(hi for _, hi in ranges.values())
+    oracle = PrimeOracle(eval_n_max)
+    print(f"loaded {checkpoint} (features={feature_fn.names}, model={cfg['model']}) | eval sieve to {eval_n_max:,}")
 
-    if in_dist[0] > cfg["n_max"] or ood[0] > cfg["n_max"]:
-        raise SystemExit(
-            f"eval ranges start beyond sieve n-max {cfg['n_max']:,} — pass ranges within it"
-        )
-    in_dist = (in_dist[0], min(in_dist[1], cfg["n_max"]))
-    ood = (ood[0], min(ood[1], cfg["n_max"]))
-
-    results = {
-        "in_dist": eval_all(model, oracle, feature_fn, *in_dist),
-        "ood": eval_all(model, oracle, feature_fn, *ood),
-    }
-    for label, r in results.items():
-        print(f"\n== {label} [{r['n'][0]:,}, {r['n'][-1]:,}] ==")
+    results = {key: eval_all(model, oracle, feature_fn, *ranges[key]) for key in EVAL_KEYS}
+    for key in EVAL_KEYS:
+        r = results[key]
+        print(f"\n== {RANGE_LABELS[key]} [{r['n'][0]:,}, {r['n'][-1]:,}] ==")
         print(format_metrics("model", r["model"]))
         print(format_metrics("residue rule", r["residue_rule"]))
         print(format_metrics("all-composite", r["all_composite"]))
 
-    pred_prime = (results["in_dist"]["p"] >= 0.5).astype(np.int8)
-    pred_prime_ood = (results["ood"]["p"] >= 0.5).astype(np.int8)
     fp = {
-        "in_dist": fp_anatomy(results["in_dist"]["n"], results["in_dist"]["y"], pred_prime, oracle),
-        "ood": fp_anatomy(results["ood"]["n"], results["ood"]["y"], pred_prime_ood, oracle),
         "residue_in_dist": fp_anatomy(
             results["in_dist"]["n"], results["in_dist"]["y"], results["in_dist"]["residue_pred"], oracle
         ),
     }
+    for key in EVAL_KEYS:
+        r = results[key]
+        pred = (r["p"] >= 0.5).astype(np.int8)
+        fp[key] = fp_anatomy(r["n"], r["y"], pred, oracle)
 
     # confusion matrices, model only
-    fig, axes = plt.subplots(1, 2, figsize=(9, 4))
-    for ax, (label, r) in zip(axes, results.items()):
-        m = r["model"]
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4))
+    for ax, key in zip(axes, EVAL_KEYS):
+        m = results[key]["model"]
         cm = np.array([[m["tn"], m["fp"]], [m["fn"], m["tp"]]])
         ax.imshow(cm, cmap="Blues")
         for (i, j), v in np.ndenumerate(cm):
@@ -142,30 +154,31 @@ def evaluate_checkpoint(
         ax.set(
             xticks=[0, 1], yticks=[0, 1],
             xticklabels=["comp", "prime"], yticklabels=["comp", "prime"],
-            xlabel="predicted", ylabel="true", title=f"{'in-dist' if label == 'in_dist' else 'OOD'}",
+            xlabel="predicted", ylabel="true", title=RANGE_LABELS[key],
         )
     fig.suptitle("Model confusion matrices")
     fig.tight_layout()
     fig.savefig(out / "confusion.png", dpi=120)
 
-    # false-positive smallest-factor anatomy: model vs explicit residue sieve
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    bins = np.linspace(2, np.log10(cfg["n_max"]) + 0.2, 30)
-    for ax, (label, key) in zip(axes, (("in-dist", "in_dist"), ("OOD", "ood"))):
-        a, b = fp[key], fp["residue_in_dist"] if key == "in_dist" else None
+    # false-positive smallest-factor anatomy: model vs explicit residue sieve.
+    # Bins start at log10(2) so FPs with small factors are NOT silently dropped.
+    fig, axes = plt.subplots(1, 3, figsize=(12.5, 4))
+    bins = np.linspace(np.log10(2), np.log10(eval_n_max) + 0.2, 40)
+    for ax, key in zip(axes, EVAL_KEYS):
+        a = fp[key]
         if a["count"]:
-            ax.hist(np.log10(a["smallest"]), bins=bins, alpha=0.6, label="model FPs")
-        if b is not None and b["count"]:
-            ax.hist(np.log10(b["smallest"]), bins=bins, alpha=0.6, label="residue-rule FPs")
-        ax.set(xlabel="log10(smallest prime factor)", ylabel="count", title=label)
-        ax.legend()
+            ax.hist(np.log10(a["smallest"]), bins=bins, alpha=0.7, label="model FPs")
+        if key == "in_dist" and fp["residue_in_dist"]["count"]:
+            ax.hist(np.log10(fp["residue_in_dist"]["smallest"]), bins=bins, alpha=0.5, label="residue-rule FPs")
+        ax.set(xlabel="log10(smallest prime factor)", ylabel="count", title=RANGE_LABELS[key])
+        ax.legend(fontsize=8)
     fig.suptitle("Anatomy of false positives: composites predicted prime")
     fig.tight_layout()
     fig.savefig(out / "fp_anatomy.png", dpi=120)
 
     metrics_out = {
-        k: {b: v2 for b, v2 in v.items() if b not in ("n", "y", "p", "residue_pred")}
-        for k, v in results.items()
+        key: {b: v2 for b, v2 in v.items() if b not in ("n", "y", "p", "residue_pred")}
+        for key, v in results.items()
     }
     fp_summary = {
         k: {
@@ -180,7 +193,8 @@ def evaluate_checkpoint(
 
     eval_record = {
         "in_dist": results["in_dist"]["model"],
-        "ood": results["ood"]["model"],
+        "near_ood": results["near_ood"]["model"],
+        "far_ood": results["far_ood"]["model"],
         "residue_rule": results["in_dist"]["residue_rule"],
         "fp": fp_summary,
     }
@@ -197,15 +211,18 @@ def evaluate_checkpoint(
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("checkpoint", type=Path)
-    p.add_argument("--in-dist-start", type=int, default=1_000_000)
-    p.add_argument("--in-dist-end", type=int, default=1_200_000)
-    p.add_argument("--ood-start", type=int, default=5_000_000)
-    p.add_argument("--ood-end", type=int, default=5_200_000)
+    p.add_argument("--in-dist-start", type=int, default=750_000)
+    p.add_argument("--in-dist-end", type=int, default=800_000)
+    p.add_argument("--near-ood-start", type=int, default=1_000_000)
+    p.add_argument("--near-ood-end", type=int, default=1_200_000)
+    p.add_argument("--far-ood-start", type=int, default=5_000_000)
+    p.add_argument("--far-ood-end", type=int, default=5_200_000)
     args = p.parse_args()
     evaluate_checkpoint(
         args.checkpoint,
         (args.in_dist_start, args.in_dist_end),
-        (args.ood_start, args.ood_end),
+        (args.near_ood_start, args.near_ood_end),
+        (args.far_ood_start, args.far_ood_end),
     )
 
 

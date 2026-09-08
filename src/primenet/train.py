@@ -38,9 +38,9 @@ def main() -> None:
     p.add_argument("--hidden", default="128,128,64")
     p.add_argument("--n-max", type=int, default=10_000_000, help="sieve bound (labels)")
     p.add_argument("--train-min", type=int, default=2)
-    p.add_argument("--train-max", type=int, default=800_000)
-    p.add_argument("--val-min", type=int, default=800_000)
-    p.add_argument("--val-max", type=int, default=1_000_000)
+    p.add_argument("--train-max", type=int, default=700_000)
+    p.add_argument("--val-min", type=int, default=700_000)
+    p.add_argument("--val-max", type=int, default=750_000)
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--steps-per-epoch", type=int, default=1250, help="1250 x 4096 ~ 5.1M samples")
     p.add_argument("--batch-size", type=int, default=4096)
@@ -48,10 +48,12 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--tag", default="", help="free-text label for the progress board (e.g. 'residues-only')")
     p.add_argument("--no-auto-eval", action="store_true", help="skip automatic evaluation after training")
-    p.add_argument("--eval-in-dist-start", type=int, default=1_000_000)
-    p.add_argument("--eval-in-dist-end", type=int, default=1_200_000)
-    p.add_argument("--eval-ood-start", type=int, default=5_000_000)
-    p.add_argument("--eval-ood-end", type=int, default=5_200_000)
+    p.add_argument("--eval-in-dist-start", type=int, default=750_000, help="held-out interval inside the training span")
+    p.add_argument("--eval-in-dist-end", type=int, default=800_000)
+    p.add_argument("--eval-near-ood-start", type=int, default=1_000_000, help="just beyond the training range")
+    p.add_argument("--eval-near-ood-end", type=int, default=1_200_000)
+    p.add_argument("--eval-far-ood-start", type=int, default=5_000_000, help="far beyond the training range")
+    p.add_argument("--eval-far-ood-end", type=int, default=5_200_000)
     p.add_argument("--compile", action="store_true", help="torch.compile (slow warmup, faster steps)")
     p.add_argument("--out", default=None, help="output dir (default runs/<timestamp>)")
     p.add_argument("--smoke", action="store_true", help="tiny config, end-to-end in ~1 min")
@@ -59,13 +61,8 @@ def main() -> None:
 
     if args.smoke:
         args.n_max, args.train_max = 1_200_000, 400_000
-        args.val_min, args.val_max = 400_000, 500_000
+        args.val_min, args.val_max = 400_000, 450_000
         args.epochs, args.steps_per_epoch, args.batch_size = 1, 100, 4096
-        args.eval_in_dist_start, args.eval_in_dist_end = 600_000, 650_000
-        args.eval_ood_start, args.eval_ood_end = 1_100_000, 1_150_000
-
-    if "binary" in args.features and args.n_max >= 2**BINARY_BITS:
-        raise SystemExit(f"--n-max {args.n_max:,} needs > {BINARY_BITS} binary bits")
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -77,6 +74,8 @@ def main() -> None:
     print(f"torch {torch.__version__} | threads {torch.get_num_threads()} | out {out}")
     oracle = PrimeOracle(args.n_max)
     feature_fn = make_feature_fn(args.features)
+    if "binary" in feature_fn.names and args.n_max >= 2**BINARY_BITS:
+        raise SystemExit(f"--n-max {args.n_max:,} needs > {BINARY_BITS} binary bits")
     print(f"features {feature_fn.names} dim={feature_fn.dim} | sieve to {args.n_max:,}")
 
     model = build_model(args.model, feature_fn.dim, tuple(int(h) for h in args.hidden.split(",")))
@@ -148,13 +147,13 @@ def main() -> None:
     print(f"run tracked in runs/registry.jsonl (sps {sps:,.0f})" if sps else "run tracked in runs/registry.jsonl")
 
     if not args.no_auto_eval:
-        id_r = (args.eval_in_dist_start, min(args.eval_in_dist_end, args.n_max))
-        ood_r = (args.eval_ood_start, min(args.eval_ood_end, args.n_max))
-        if id_r[0] > args.n_max or ood_r[0] > args.n_max:
-            print(f"auto-eval skipped: eval ranges start beyond sieve n-max {args.n_max:,}")
-        else:
-            print("auto-evaluating...")
-            evaluate_checkpoint(out / "model.pt", id_r, ood_r)
+        print("auto-evaluating...")
+        evaluate_checkpoint(
+            out / "model.pt",
+            (args.eval_in_dist_start, args.eval_in_dist_end),
+            (args.eval_near_ood_start, args.eval_near_ood_end),
+            (args.eval_far_ood_start, args.eval_far_ood_end),
+        )
 
 
 if __name__ == "__main__":

@@ -218,40 +218,47 @@ function showTooltip(px, py, cfg, i) {
 function renderCharts() {
   if (!evaluated.length) { qs("#overview .charts").style.opacity = .4; return; }
   const labels = evaluated.map(r => (r.tag ? r.tag + " · " : "") + r.run_id.slice(-6));
-  const sv = (key, scope) => evaluated.map(r => { const m = (r.eval[scope] || {})[key]; return m == null ? null : m; });
+  const sv = (key, scope) => evaluated.map(r => { const m = ((r.eval[scope] || (scope === "near_ood" ? r.eval.ood : null)) || {})[key]; return m == null ? null : m; });
   const fpv = scope => evaluated.map(r => { const f = ((r.eval.fp || {})[scope] || {}); return f.median_smallest == null ? null : f.median_smallest; });
-  const RES = "#111827";
+  const RES = "#111827", NEAR = "#ea580c", FAR = "#dc2626";
   drawChart(qs("#c-precision"), { title: "Prime precision (higher = fewer false alarms)", labels, series: [
     { name: "model in-dist", color: "#2563eb", values: sv("precision_prime", "in_dist") },
-    { name: "model OOD", color: "#ea580c", values: sv("precision_prime", "ood") },
+    { name: "model near-OOD", color: NEAR, values: sv("precision_prime", "near_ood") },
+    { name: "model far-OOD", color: FAR, values: sv("precision_prime", "far_ood") },
     { name: "residue rule (in-dist)", color: RES, dash: true, noDots: true, values: sv("precision_prime", "residue_rule") },
   ]});
   drawChart(qs("#c-recall"), { title: "Prime recall (catching true primes)", labels, series: [
     { name: "in-dist", color: "#2563eb", values: sv("recall_prime", "in_dist") },
-    { name: "OOD", color: "#ea580c", values: sv("recall_prime", "ood") },
+    { name: "near-OOD", color: NEAR, values: sv("recall_prime", "near_ood") },
+    { name: "far-OOD", color: FAR, values: sv("recall_prime", "far_ood") },
   ]});
   drawChart(qs("#c-composite"), { title: "Composite recall (1 − false positive rate)", labels, series: [
     { name: "in-dist", color: "#2563eb", values: sv("recall_composite", "in_dist") },
-    { name: "OOD", color: "#ea580c", values: sv("recall_composite", "ood") },
+    { name: "near-OOD", color: NEAR, values: sv("recall_composite", "near_ood") },
+    { name: "far-OOD", color: FAR, values: sv("recall_composite", "far_ood") },
     { name: "residue rule (in-dist)", color: RES, dash: true, noDots: true, values: sv("recall_composite", "residue_rule") },
   ]});
   drawChart(qs("#c-fp"), { title: "FP anatomy: median smallest factor (log scale)", labels, logY: true, series: [
-    { name: "model FPs (in-dist)", color: "#2563eb", values: fpv("in_dist") },
+    { name: "FPs in-dist", color: "#2563eb", values: fpv("in_dist") },
+    { name: "FPs near-OOD", color: NEAR, values: fpv("near_ood") },
+    { name: "FPs far-OOD", color: FAR, values: fpv("far_ood") },
     { name: "residue rule FPs", color: RES, dash: true, noDots: true, values: fpv("residue_in_dist") },
   ]});
 }
 
 /* ---------- run table ---------- */
 function renderTable() {
-  let html = '<table><tr><th>run</th><th>tag</th><th>cfg</th><th>Msamp</th><th>P_in</th><th>P_ood</th><th>R_in</th><th>compR</th><th>FPmed</th><th>sps</th><th>host</th></tr>';
+  let html = '<table><tr><th>run</th><th>tag</th><th>cfg</th><th>Msamp</th><th>P_in</th><th>P_near</th><th>P_far</th><th>R_in</th><th>compR</th><th>FPmed</th><th>sps</th><th>host</th></tr>';
   runs.slice().reverse().forEach(r => {
-    const e = r.eval || {}, m = e.in_dist || {}, o = e.ood || {};
+    const e = r.eval || {}, m = e.in_dist || {};
+    const near = e.near_ood || e.ood || {}, far = e.far_ood || {};
     const fp = ((e.fp || {}).in_dist) || {};
     html += "<tr><td><a href='#run-" + r.run_id + "'>" + r.run_id + "</a></td>" +
       "<td>" + (r.tag ? esc(r.tag) : '<span class="muted">–</span>') + "</td>" +
       "<td>" + esc(cfgLabel(r)) + "</td>" +
       "<td>" + (r.samples ? (r.samples / 1e6).toFixed(2) : "–") + "</td>" +
-      "<td>" + fmt(m.precision_prime) + "</td><td>" + fmt(o.precision_prime) + "</td>" +
+      "<td>" + fmt(m.precision_prime) + "</td><td>" + fmt(near.precision_prime) + "</td>" +
+      "<td>" + fmt(far.precision_prime) + "</td>" +
       "<td>" + fmt(m.recall_prime) + "</td><td>" + fmt(m.recall_composite) + "</td>" +
       "<td>" + (fp.median_smallest == null ? "–" : fp.median_smallest) + "</td>" +
       "<td>" + (r.sps ? Math.round(r.sps / 1e3) + "k" : "–") + "</td>" +
@@ -267,7 +274,8 @@ function chip(name, value, cls) {
 function renderTiles() {
   let html = "";
   runs.slice().reverse().forEach(r => {
-    const e = r.eval, m = (e && e.in_dist) || {}, o = (e && e.ood) || {};
+    const e = r.eval, m = (e && e.in_dist) || {};
+    const near = (e && (e.near_ood || e.ood)) || {}, far = (e && e.far_ood) || {};
     const fp = (e && e.fp && e.fp.in_dist) || {}, rr = (e && e.residue_rule) || {};
     const p = m.precision_prime;
     let cls = "";
@@ -278,7 +286,8 @@ function renderTiles() {
       '<div class="meta">' + esc((r.time || "").replace("T", " ")) + " · " + esc(r.host || "?") +
       (r.git ? " · " + esc(r.git) : "") + " · " + esc(cfgLabel(r)) + "</div>" +
       '<div class="chips">' +
-      chip("P_in", fmt(p), cls) + chip("P_ood", fmt(o.precision_prime), cls) +
+      chip("P_in", fmt(p), cls) + chip("P_near", fmt(near.precision_prime), cls) +
+      chip("P_far", fmt(far.precision_prime), cls) +
       chip("R_in", fmt(m.recall_prime), m.recall_prime != null && m.recall_prime >= 0.99 ? "good" : "") +
       chip("compR", fmt(m.recall_composite)) +
       chip("FPmed", fp.median_smallest == null ? "–" : fp.median_smallest) +
@@ -316,13 +325,14 @@ function renderDetails() {
       " · lr " + esc(c.lr) + " · bs " + esc(c.batch_size) + " · sieve " + esc((c.n_max == null ? "?" : c.n_max.toLocaleString())) + "</div>";
     if (e && e.in_dist) {
       const fp = e.fp || {};
-      const fchip = (k, lbl) => chip(lbl, (fp[k] && fp[k].median_smallest != null) ? fp[k].median_smallest : "–") ;
+      const fchip = (k, lbl) => chip(lbl, (fp[k] && fp[k].median_smallest != null) ? fp[k].median_smallest : "–");
       html += '<div class="cols2"><div>' + metricsTable("model in-dist", e.in_dist) +
-        metricsTable("model OOD", e.ood) + "</div><div>" +
-        metricsTable("residue rule in-dist", e.residue_rule) +
+        metricsTable("model near-OOD", e.near_ood || e.ood) + metricsTable("model far-OOD", e.far_ood) +
+        "</div><div>" + metricsTable("residue rule in-dist", e.residue_rule) +
         '<div class="chips" style="margin-top:10px">' +
         fchip("in_dist", "FP in-dist (median smallest factor)") +
-        fchip("ood", "FP OOD") + fchip("residue_in_dist", "FP residue rule") +
+        fchip("near_ood", "FP near-OOD") + fchip("far_ood", "FP far-OOD") +
+        fchip("residue_in_dist", "FP residue rule") +
         "</div></div></div>";
     } else {
       html += '<span class="badge-none">not evaluated yet</span>';
