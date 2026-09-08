@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from .data import PrimeOracle, sample_batch
 from .evaluate import evaluate_checkpoint
-from .features import BINARY_BITS, make_feature_fn
+from .features import BINARY_BITS, TOKEN_BITS, make_feature_fn
 from .metrics import format_metrics, prf
 from .model import build_model
 from .predict import predict_range
@@ -33,9 +33,12 @@ from .track import append_record, make_record
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--features", default="all", help="binary,residues,fourier or 'all'")
-    p.add_argument("--model", default="mlp", choices=["mlp", "cnn"])
+    p.add_argument("--features", default="all", help="binary,residues,fourier,'all', or 'tokens'")
+    p.add_argument("--model", default="mlp", choices=["mlp", "cnn", "deepset"])
     p.add_argument("--hidden", default="128,128,64")
+    p.add_argument("--train-primes-count", type=int, default=25, help="tokens: random primes beyond the always set")
+    p.add_argument("--train-primes-max", type=int, default=4093, help="tokens: pool = primes <= this")
+    p.add_argument("--train-primes-always", default="2,3,5,7", help="tokens: primes always included")
     p.add_argument("--n-max", type=int, default=10_000_000, help="sieve bound (labels)")
     p.add_argument("--train-min", type=int, default=2)
     p.add_argument("--train-max", type=int, default=700_000)
@@ -62,21 +65,39 @@ def main() -> None:
     if args.smoke:
         args.n_max, args.train_max = 1_200_000, 400_000
         args.val_min, args.val_max = 400_000, 450_000
-        args.epochs, args.steps_per_epoch, args.batch_size = 1, 100, 4096
+        args.epochs, args.batch_size = 1, 4096
+        # tokens need ~300 steps for held-out transfer (prototype scale); explicit
+        # CLI values below the cap are respected
+        args.steps_per_epoch = min(args.steps_per_epoch, 300 if args.features == "tokens" else 100)
 
     torch.manual_seed(args.seed)
-    rng = np.random.default_rng(args.seed)
     device = "cpu"
     out = Path(args.out) if args.out else Path("runs") / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
-    (out / "config.json").write_text(json.dumps({**vars(args), "host": socket.gethostname()}, indent=2))
 
     print(f"torch {torch.__version__} | threads {torch.get_num_threads()} | out {out}")
     oracle = PrimeOracle(args.n_max)
-    feature_fn = make_feature_fn(args.features)
+    rng = np.random.default_rng(args.seed)  # reseeded here so the prime draw is reproducible
+    if args.features == "tokens":
+        pool = oracle.primes_up_to(args.train_primes_max)
+        if len(pool) == 0:
+            raise SystemExit(f"--train-primes-max {args.train_primes_max} exceeds the sieve")
+        always = np.array([int(v) for v in args.train_primes_always.split(",")], dtype=np.int64)
+        n_random = max(args.train_primes_count - len(always), 0)
+        picked = rng.choice(pool[~np.isin(pool, always)], size=n_random, replace=False)
+        train_primes = np.sort(np.concatenate([always, picked]))
+        feature_fn = make_feature_fn("tokens", primes=train_primes)
+        args.train_primes = [int(p) for p in train_primes]
+        args.token_bits = list(TOKEN_BITS)
+        print(f"train primes ({len(train_primes)}): {train_primes.tolist()}")
+    else:
+        feature_fn = make_feature_fn(args.features)
+    if feature_fn.primes is not None and args.model != "deepset":
+        raise SystemExit("--features tokens requires --model deepset (rank-3 token input)")
     if "binary" in feature_fn.names and args.n_max >= 2**BINARY_BITS:
         raise SystemExit(f"--n-max {args.n_max:,} needs > {BINARY_BITS} binary bits")
     print(f"features {feature_fn.names} dim={feature_fn.dim} | sieve to {args.n_max:,}")
+    (out / "config.json").write_text(json.dumps({**vars(args), "host": socket.gethostname()}, indent=2))
 
     model = build_model(args.model, feature_fn.dim, tuple(int(h) for h in args.hidden.split(",")))
     raw_model = model

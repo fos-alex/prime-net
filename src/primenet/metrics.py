@@ -40,3 +40,45 @@ def format_metrics(name: str, m: dict) -> str:
         f"F1={m['f1_prime']:.4f} | comp R={m['recall_composite']:.4f} | "
         f"acc={m['accuracy']:.4f} | FP={m['fp']:,}"
     )
+
+
+def _sorted_by_score(y_true: np.ndarray, y_score: np.ndarray):
+    """Sort descending by score; return labels, scores, cumulative tp, precision, recall,
+    and a mask of tie-group end positions (honest threshold points)."""
+    y = np.asarray(y_true).astype(np.int8)
+    s = np.asarray(y_score, dtype=np.float64)
+    order = np.argsort(-s, kind="stable")
+    y, s = y[order], s[order]
+    tp = np.cumsum(y == 1)
+    precision = tp / (np.arange(len(y)) + 1)
+    recall = tp / max(int((y == 1).sum()), 1)
+    group_end = np.empty(len(y), dtype=bool)
+    group_end[:-1] = s[:-1] != s[1:]
+    group_end[-1] = True
+    return s, tp, precision, recall, group_end
+
+
+def precision_at_recall(y_true: np.ndarray, y_score: np.ndarray, r_target: float) -> float | None:
+    """Max precision over achievable thresholds with recall >= r_target.
+
+    Returns None when the score curve never reaches r_target. Ties are handled
+    by evaluating each threshold at the end of its tie group.
+    """
+    _, _, precision, recall, group_end = _sorted_by_score(y_true, y_score)
+    valid = (recall >= r_target) & group_end
+    if not valid.any():
+        return None
+    return float(precision[valid].max())
+
+
+def average_precision(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """Precision summed over recall increments (step-function area under the PR curve).
+
+    One threshold per tie group, evaluated at the group end: the group's whole
+    recall increment is multiplied by the precision at that threshold.
+    """
+    s, _, precision, recall, group_end = _sorted_by_score(y_true, y_score)
+    ends = np.flatnonzero(group_end)
+    recall_end, precision_end = recall[ends], precision[ends]
+    delta = np.diff(np.concatenate([[0.0], recall_end]))
+    return float(np.sum(delta * precision_end))

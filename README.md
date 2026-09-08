@@ -105,6 +105,47 @@ python -m primenet.evaluate runs/<timestamp>/model.pt
 - OOD degradation on the far range tells you whether the model learned *arithmetic*
   (scale-invariant modular structure) or *statistics of the training range*.
 
+## Token sieve (DeepSet over per-prime tokens)
+
+The residue/Fourier encodings give every prime its own input slot and therefore its own
+weights — divisibility by each prime is learned separately, from the rare examples where
+that prime is the smallest factor. That is the staircase, and it stalls (17 after 3 epochs
+in the legacy runs). The token sieve instead shares one detector across primes:
+
+```
+n  ->  one token per prime p:  [ bits(n mod p) | bits(p) ]     (12 + 12 bits)
+       phi   : shared MLP, applied to every token    (24 -> 64 -> 64)
+       pool  : element-wise max across tokens        ("any token fired")
+       rho   : MLP on the pooled vector              (64 -> 64 -> 1, ~10k params)
+```
+
+Adding a prime at inference adds a token, not a weight: the prime set is a runtime knob
+and the precision ceiling moves with it. Train with
+`python -m primenet.train --features tokens --model deepset --tag "token-sieve"`;
+evaluation sweeps inference prime depth (`97, 199, 499, full`), reports P@R.999 and AP
+per depth, and splits per-prime detection into seen vs held-out primes (the transfer
+test — `python -m primenet.serve --primes-max 499` probes it interactively).
+
+What this does *not* do: discover primes from the bits of n — residues are computed
+outside the network. And beating the residue rule at any depth above the trained
+baseline is a *construction consequence* of giving the model more primes, not a
+discovery about networks; the results to watch are held-out transfer and the ceiling.
+
+**Measured (3 seeds × 1,500 steps, batch 4096, mean precision at threshold 0.5):**
+
+| range | depth 97 | depth 499 | full | P@R.999 (full) |
+|---|---|---|---|---|
+| in-dist [750k, 800k] | 0.613 (= rule, identical FPs) | 0.865 (= rule) | **0.993** | 1.000 |
+| near-OOD [1M, 1.2M] | – | – | **0.989** | 0.996 |
+| far-OOD [5M, 5.2M] | – | – | **0.968** | 0.978 |
+
+Held-out prime transfer: detection **1.000** on every held-out prime with ≥ 20 examples,
+all 3 seeds. At every depth the model converges to the *exact* sieve for that depth —
+identical confusion counts to the explicit rule — and extrapolates the shared detector
+to 338 unseen primes at far-OOD. Targets, gates and next steps (bit-width
+extrapolation, ablations, stage two: divisibility from the bits of n):
+`docs/token-sieve-plan.md`.
+
 ## Tracking progress across runs (mini ML Ops)
 
 Every training run appends a line to `runs/registry.jsonl` (config, throughput, final

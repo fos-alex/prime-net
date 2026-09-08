@@ -250,7 +250,7 @@ function renderCharts() {
 
 /* ---------- run table ---------- */
 function renderTable() {
-  let html = '<table><tr><th>run</th><th>tag</th><th>cfg</th><th>Msamp</th><th>P_in</th><th>P_near</th><th>P_far</th><th>R_in</th><th>compR</th><th>FPmed</th><th>sps</th><th>host</th></tr>';
+  let html = '<table><tr><th>run</th><th>tag</th><th>cfg</th><th>Msamp</th><th>P_in</th><th>P_near</th><th>P_far</th><th>P@R.999</th><th>R_in</th><th>compR</th><th>FPmed</th><th>sps</th><th>host</th></tr>';
   runs.slice().reverse().forEach(r => {
     const e = r.eval || {}, m = e.in_dist || {};
     const near = e.near_ood || e.ood || {}, far = e.far_ood || {};
@@ -261,6 +261,7 @@ function renderTable() {
       "<td>" + (r.samples ? (r.samples / 1e6).toFixed(2) : "–") + "</td>" +
       "<td>" + fmt(m.precision_prime) + "</td><td>" + fmt(near.precision_prime) + "</td>" +
       "<td>" + fmt(far.precision_prime) + "</td>" +
+      "<td>" + fmt(e.p_at_r999_full) + "</td>" +
       "<td>" + fmt(m.recall_prime) + "</td><td>" + fmt(m.recall_composite) + "</td>" +
       "<td>" + (fp.median_smallest == null ? "–" : fp.median_smallest) + "</td>" +
       "<td>" + (r.sps ? Math.round(r.sps / 1e3) + "k" : "–") + "</td>" +

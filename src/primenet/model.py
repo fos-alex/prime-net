@@ -47,4 +47,35 @@ def build_model(name: str, in_dim: int, hidden: tuple[int, ...] = (128, 128, 64)
         return MLP(in_dim, hidden)
     if name == "cnn":
         return PrimeCNN(in_dim)
-    raise ValueError(f"unknown model {name!r}; choose 'mlp' or 'cnn'")
+    if name == "deepset":
+        return DeepSet(in_dim)
+    raise ValueError(f"unknown model {name!r}; choose 'mlp', 'cnn' or 'deepset'")
+
+
+class DeepSet(nn.Module):
+    """Shared phi over per-prime tokens, max-pool over tokens, rho head.
+
+    One divisibility detector shared across all primes: adding a prime at
+    inference adds a token, not a weight (docs/token-sieve-plan.md).
+    phi: in -> 64 -> 64 ; rho: 64 -> 64 -> 1 (~10k params at in_dim=24).
+    """
+
+    def __init__(self, in_dim: int, phi_hidden: tuple[int, ...] = (64, 64), rho_hidden: tuple[int, ...] = (64,)):
+        super().__init__()
+        dims = [in_dim, *phi_hidden]
+        phi: list[nn.Module] = []
+        for a, b in zip(dims[:-1], dims[1:]):
+            phi += [nn.Linear(a, b), nn.GELU()]
+        self.phi = nn.Sequential(*phi)
+        dims = [phi_hidden[-1], *rho_hidden]
+        rho: list[nn.Module] = []
+        for a, b in zip(dims[:-1], dims[1:]):
+            rho += [nn.Linear(a, b), nn.GELU()]
+        rho.append(nn.Linear(dims[-1], 1))
+        self.rho = nn.Sequential(*rho)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, T, D]; max-pool gives "any token fired" semantics and makes the
+        # output invariant to the number and order of tokens.
+        pooled = self.phi(x).amax(dim=1)          # [B, H]
+        return self.rho(pooled).squeeze(-1)       # [B]

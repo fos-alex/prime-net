@@ -23,7 +23,7 @@ import torch
 from .baselines import residue_rule_predict
 from .data import PrimeOracle
 from .evaluate import load_model
-from .features import BINARY_BITS, make_feature_fn
+from .features import BINARY_BITS, SMALL_PRIMES, make_feature_fn
 from .nt import factor_stats
 
 MAX_INPUTS = 64
@@ -120,7 +120,9 @@ const saveHist = () => { try { if (HKEY) sessionStorage.setItem(HKEY, JSON.strin
 
 fetch("/api/meta").then(r => r.json()).then(m => {
   qs("#sub").textContent = m.run_id + " · " + m.model + "/" + m.features + " · trained on [2, " +
-    m.train_max.toLocaleString() + "] · accepts n ≤ " + m.max_n.toLocaleString();
+    m.train_max.toLocaleString() + "] · accepts n ≤ " + m.max_n.toLocaleString() +
+    " · residue rule: " + m.primes_depth + " primes" +
+    (m.primes_max ? " (≤ " + m.primes_max.toLocaleString() + ")" : " (< 100)");
   HKEY = "primenet-history:" + m.run_id;
   hist = loadHist();
   renderHistory();
@@ -216,9 +218,14 @@ qs("#hist").addEventListener("click", e => {
 class Probe:
     """Holds the model, the sieve and the feature encoder for the server's lifetime."""
 
-    def __init__(self, checkpoint: Path, max_n: int | None = None):
+    def __init__(self, checkpoint: Path, max_n: int | None = None, primes_max: int | None = None):
         self.model, self.cfg = load_model(checkpoint)
-        self.feature_fn = make_feature_fn(self.cfg["features"])
+        if self.cfg["features"] == "tokens":
+            self.feature_fn = make_feature_fn(
+                "tokens", primes=self.cfg["train_primes"], bits=self.cfg.get("token_bits", (12, 12))
+            )
+        else:
+            self.feature_fn = make_feature_fn(self.cfg["features"])
         self.run_id = checkpoint.parent.name
         self.max_n = int(max_n or self.cfg["n_max"])
         if "binary" in self.feature_fn.names and self.max_n >= 2**BINARY_BITS:
@@ -227,13 +234,23 @@ class Probe:
                 f"(limit {2**BINARY_BITS - 1:,}); retrain with more bits or lower --max-n"
             )
         self.oracle = PrimeOracle(self.max_n)
+        # the residue-rule baseline shares the model's prime depth so the
+        # comparison stays honest at every sieve depth
+        if primes_max is None and self.cfg["features"] == "tokens":
+            primes_max = 97
+        self.rule_primes = (
+            np.asarray(SMALL_PRIMES, dtype=np.int64)
+            if primes_max is None
+            else PrimeOracle(int(primes_max)).primes_up_to(int(primes_max))
+        )
+        self.primes_max = primes_max
 
     def predict(self, nums: list[int]) -> list[dict]:
         n = np.array(nums, dtype=np.int64)
         with torch.no_grad():
             p = torch.sigmoid(self.model(torch.from_numpy(self.feature_fn(n)))).numpy()
         truth = self.oracle.is_prime(n)
-        residue = residue_rule_predict(n) == 1.0
+        residue = residue_rule_predict(n, self.rule_primes) == 1.0
         smallest, omega, _ = factor_stats(n, self.oracle.primes)
         out = []
         for i, v in enumerate(nums):
@@ -305,6 +322,8 @@ def make_handler(probe: Probe, rng: np.random.Generator):
                     "features": probe.cfg["features"],
                     "train_max": probe.cfg["train_max"],
                     "max_n": probe.max_n,
+                    "primes_depth": len(probe.rule_primes),
+                    "primes_max": probe.primes_max,
                 })
             elif url.path == "/api/trap":
                 self._json({"n": probe.trap(rng)})
@@ -339,13 +358,17 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--max-n", type=int, default=None, help="largest queryable n (default: training sieve bound)")
+    p.add_argument("--primes-max", type=int, default=None,
+                   help="residue-rule prime depth (all primes <= this); default: 97 for token models, "
+                        "the classic primes<100 rule otherwise")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
     ckpt = args.checkpoint or latest_checkpoint(Path("runs"))
-    probe = Probe(ckpt, args.max_n)
+    probe = Probe(ckpt, args.max_n, args.primes_max)
     print(f"loaded {ckpt} (features={probe.feature_fn.names}, model={probe.cfg['model']})")
-    print(f"sieve to {probe.max_n:,} | serving http://{args.host}:{args.port}")
+    print(f"sieve to {probe.max_n:,} | residue rule on {len(probe.rule_primes)} primes "
+          f"| serving http://{args.host}:{args.port}")
 
     server = ThreadingHTTPServer((args.host, args.port), make_handler(probe, np.random.default_rng(args.seed)))
     try:

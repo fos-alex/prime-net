@@ -6,8 +6,14 @@ import numpy as np
 import torch
 
 
-def predict_range(model, oracle, feature_fn, n_min: int, n_max: int, chunk: int = 50_000):
-    """Enumerate [n_min, n_max] inclusive; return (y_true, p_prime)."""
+def predict_range(model, oracle, feature_fn, n_min: int, n_max: int, chunk: int | None = None):
+    """Enumerate [n_min, n_max] inclusive; return (y_true, p_prime).
+
+    chunk defaults to feature_fn.chunk when present (token features are
+    rank-3 and need a smaller enumeration chunk), else 50_000.
+    """
+    if chunk is None:
+        chunk = int(getattr(feature_fn, "chunk", 0) or 50_000)
     model.eval()
     ys, ps = [], []
     with torch.no_grad():

@@ -52,20 +52,61 @@ _FEATURE_FNS: dict[str, Callable[[np.ndarray], np.ndarray]] = {
     "fourier": fourier_features,
 }
 
+TOKEN_BITS = (12, 12)  # (residue bits, prime bits): primes up to 4093 = sqrt(2^24)
+TOKEN_CHUNK = 5000     # predict_range enumeration chunk: rank-3 features are memory-heavy
 
-def make_feature_fn(spec: str) -> Callable[[np.ndarray], np.ndarray]:
-    """Build a combined feature function from a comma-separated spec.
 
-    spec: "binary", "residues", "fourier", "all", or e.g. "binary,fourier".
-    The returned function has attributes .names and .dim.
+def token_features(n: np.ndarray, primes: np.ndarray, rb: int = 12, pb: int = 12) -> np.ndarray:
+    """One token per prime p: [ bits(n mod p, rb) | bits(p, pb) ], shape [B, T, rb+pb].
+
+    "All residue bits zero" is the same easy conjunction for every prime, so a
+    shared detector transfers: adding a prime at inference adds a token, not a
+    weight (docs/token-sieve-plan.md).
     """
+    n = np.asarray(n, dtype=np.int64)
+    primes = np.asarray(primes, dtype=np.int64)
+    res = n[:, None] % primes[None, :]                                   # [B, T]
+    res_bits = ((res[..., None] >> np.arange(rb)) & 1).astype(np.float32)  # [B, T, rb]
+    p_bits = ((primes[:, None] >> np.arange(pb)) & 1).astype(np.float32)   # [T, pb]
+    p_bits = np.broadcast_to(p_bits[None, :, :], res_bits.shape).copy()    # [B, T, pb]
+    return np.concatenate([res_bits, p_bits], axis=2)
+
+
+def make_feature_fn(spec: str, primes: np.ndarray | None = None, bits: tuple[int, int] = TOKEN_BITS):
+    """Build a feature function from a spec.
+
+    - spec "tokens" requires primes= and produces rank-3 output [B, T, rb+pb];
+      it cannot be combined with other specs in v1.
+    - other specs are comma-separated subsets of {binary, residues, fourier}
+      or "all"; rank-2 [B, D].
+
+    The returned function carries .names, .dim, and for tokens also .primes
+    and .chunk (a predict_range memory hint).
+    """
+    if spec == "tokens":
+        if primes is None:
+            raise ValueError("spec 'tokens' requires primes=")
+        primes = np.asarray(primes, dtype=np.int64)
+        rb, pb = bits
+
+        def fn(n: np.ndarray) -> np.ndarray:
+            return token_features(n, primes, rb, pb)
+
+        fn.names = ["tokens"]  # type: ignore[attr-defined]
+        fn.dim = rb + pb  # type: ignore[attr-defined]
+        fn.primes = primes  # type: ignore[attr-defined]
+        fn.chunk = TOKEN_CHUNK  # type: ignore[attr-defined]
+        return fn
+
     if spec == "all":
         names = list(_FEATURE_FNS)
     else:
         names = [s.strip() for s in spec.split(",")]
-        unknown = [k for k in names if k not in _FEATURE_FNS]
-        if unknown:
-            raise ValueError(f"unknown features {unknown}; choose from {list(_FEATURE_FNS)} or 'all'")
+    if "tokens" in names:
+        raise ValueError("'tokens' is rank-3 and cannot be combined with other features in v1")
+    unknown = [k for k in names if k not in _FEATURE_FNS]
+    if unknown:
+        raise ValueError(f"unknown features {unknown}; choose from {list(_FEATURE_FNS)} or 'all'")
 
     fns = [_FEATURE_FNS[k] for k in names]
 
@@ -75,4 +116,5 @@ def make_feature_fn(spec: str) -> Callable[[np.ndarray], np.ndarray]:
 
     fn.names = names  # type: ignore[attr-defined]
     fn.dim = int(fn(np.array([0, 1, 2], dtype=np.int64)).shape[1])  # type: ignore[attr-defined]
+    fn.primes = None  # type: ignore[attr-defined]
     return fn

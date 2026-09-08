@@ -17,6 +17,9 @@ primenet-train = "primenet.train:main"
 primenet-eval = "primenet.evaluate:main"
 primenet-serve = "primenet.serve:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "sympy>=1.12"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
