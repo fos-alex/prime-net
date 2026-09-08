@@ -108,13 +108,14 @@ python -m primenet.evaluate runs/<timestamp>/model.pt
 ## Tracking progress across runs (mini ML Ops)
 
 Every training run appends a line to `runs/registry.jsonl` (config, throughput, final
-validation KPIs), then **automatically evaluates itself** on the in-dist + OOD ranges
-(`--no-auto-eval` to disable) and attaches the full KPIs to its record. The file is
-plain JSONL — rsync-able, git-diffable, one line per run.
+validation KPIs), then **automatically evaluates itself** on the in-dist + near/far-OOD
+ranges (`--no-auto-eval` to disable), attaches the full KPIs to its record, and
+**regenerates the dashboard**. The file is plain JSONL — rsync-able, git-diffable,
+one line per run.
 
 ```bash
-python -m primenet.train --tag "my-tweak"    # train → auto-eval → track, one command
-python -m primenet.board                     # table + runs/progress/index.html
+python -m primenet.train --tag "my-tweak"    # train → auto-eval → track → dashboard
+python -m primenet.board --open              # regenerate + open the dashboard any time
 python -m primenet.board --open              # ...and open it in a browser
 python -m primenet.board --backfill          # one-time import of pre-registry runs
 ```

@@ -148,12 +148,16 @@ def main() -> None:
 
     if not args.no_auto_eval:
         print("auto-evaluating...")
-        evaluate_checkpoint(
+        evaluate_checkpoint(  # also refreshes the dashboard
             out / "model.pt",
             (args.eval_in_dist_start, args.eval_in_dist_end),
             (args.eval_near_ood_start, args.eval_near_ood_end),
             (args.eval_far_ood_start, args.eval_far_ood_end),
         )
+    else:
+        from .dashboard import refresh_default_dashboard
+
+        print(f"dashboard refreshed: {refresh_default_dashboard(Path('runs'))}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .dashboard import generate_dashboard
+from .dashboard import refresh_default_dashboard
 from .track import load_registry, make_record, save_registry
 
 
@@ -111,7 +111,7 @@ def main() -> None:
         return
     shown = records if args.include_smoke else [r for r in records if not r.get("smoke")]
     print_table(shown)
-    out = generate_dashboard(Path("runs"), shown)
+    out = refresh_default_dashboard(Path("runs"), include_smoke=args.include_smoke)
     print(f"dashboard written to {out}")
     if args.open:
         import webbrowser

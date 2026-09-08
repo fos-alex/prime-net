@@ -11,6 +11,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .track import load_registry
+
 _ARTIFACTS = [
     "loss_curve.png",
     "confusion.png",
@@ -379,3 +381,11 @@ def generate_dashboard(runs_dir: Path, records: list[dict]) -> Path:
     out = out_dir / "index.html"
     out.write_text(_TEMPLATE.replace("__DATA__", blob, 1))
     return out
+
+
+def refresh_default_dashboard(runs_dir: Path, include_smoke: bool = False) -> Path:
+    """Regenerate the dashboard from the current registry (board's default view)."""
+    records = load_registry(runs_dir / "registry.jsonl")
+    if not include_smoke:
+        records = [r for r in records if not r.get("smoke")]
+    return generate_dashboard(runs_dir, records)

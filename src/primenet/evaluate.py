@@ -29,6 +29,7 @@ from .model import build_model
 from .nt import factor_stats
 from .predict import predict_range
 from .track import append_record, make_record, update_record
+from .dashboard import refresh_default_dashboard
 
 EVAL_KEYS = ("in_dist", "near_ood", "far_ood")
 RANGE_LABELS = {"in_dist": "In-distribution", "near_ood": "Near-OOD", "far_ood": "Far-OOD"}
@@ -205,6 +206,8 @@ def evaluate_checkpoint(
         append_record(registry, stub)
     print(f"report + plots written to {out}")
     print(f"eval KPIs attached to run {out.name} in {registry}")
+    dash = refresh_default_dashboard(registry.parent)
+    print(f"dashboard refreshed: {dash}")
     return {"results": results, "fp": fp}
 
 
