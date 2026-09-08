@@ -102,25 +102,22 @@ python -m primenet.evaluate runs/<timestamp>/model.pt
 ## Tracking progress across runs (mini ML Ops)
 
 Every training run appends a line to `runs/registry.jsonl` (config, throughput, final
-validation KPIs); every evaluation attaches its full KPIs to the matching record. The
-file is plain JSONL — rsync-able, git-diffable, one line per run.
+validation KPIs), then **automatically evaluates itself** on the in-dist + OOD ranges
+(`--no-auto-eval` to disable) and attaches the full KPIs to its record. The file is
+plain JSONL — rsync-able, git-diffable, one line per run.
 
 ```bash
-python -m primenet.train  --tag "my-tweak" ...   # tag each experiment for the board
-python -m primenet.evaluate runs/<run>/model.pt  # attaches eval KPIs to the record
-python -m primenet.board                         # table + runs/progress/progress.png
-python -m primenet.board --backfill              # one-time import of pre-registry runs
+python -m primenet.train --tag "my-tweak"    # train → auto-eval → track, one command
+python -m primenet.board                     # table + runs/progress/index.html
+python -m primenet.board --open              # ...and open it in a browser
+python -m primenet.board --backfill          # one-time import of pre-registry runs
 ```
 
-The board prints a table (prime precision with Δ vs previous run, OOD precision, prime
-recall, composite recall, FP median smallest factor, throughput) and renders four charts
-against the residue-rule reference: prime precision (in-dist + OOD), prime recall,
-composite recall, and FP anatomy on a log scale.
-
-Smoke runs are tracked but hidden from the board by default (`--include-smoke` to show
-them). Runs from other machines (e.g. the VPS) merge cleanly: rsync their `runs/` over,
-delete duplicate `run_id` lines, and re-run the board. If you later outgrow this,
-`pip install mlflow && mlflow ui` is the standard upgrade path.
+The dashboard is a single self-contained HTML file (no dependencies, works offline):
+overview charts across runs (prime precision vs the residue rule, recalls, FP anatomy
+with hover tooltips), a full run table, metric tiles per run, and a detail section per
+run with its confusion numbers, FP anatomy and training artifacts. Manual evaluation of
+old checkpoints still works: `python -m primenet.evaluate runs/<run>/model.pt`.
 
 ## Roadmap
 

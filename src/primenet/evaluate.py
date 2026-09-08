@@ -1,5 +1,7 @@
 """Dissect a trained checkpoint: in-dist + OOD metrics, baselines, false-positive anatomy.
 
+Callable directly (CLI) or from train.py (automatic post-training evaluation).
+
 Example:
     python -m primenet.evaluate runs/20260907-101112/model.pt
 """
@@ -23,8 +25,8 @@ from .features import make_feature_fn
 from .metrics import format_metrics, prf
 from .model import build_model
 from .nt import factor_stats
+from .predict import predict_range
 from .track import append_record, make_record, update_record
-from .train import predict_range
 
 
 def load_model(path: Path):
@@ -65,7 +67,7 @@ def write_report(out: Path, cfg: dict, results: dict, fp: dict) -> None:
     lines = [
         "# prime-net evaluation report",
         "",
-        f"- features: `{','.join(cfg['features']) if isinstance(cfg['features'], list) else cfg['features']}`",
+        f"- features: `{cfg['features']}`",
         f"- model: `{cfg['model']}` | trained on [{cfg['train_min']:,}, {cfg['train_max']:,}]"
         f" | epochs {cfg['epochs']}",
         "",
@@ -90,24 +92,28 @@ def write_report(out: Path, cfg: dict, results: dict, fp: dict) -> None:
     (out / "report.md").write_text("\n".join(lines))
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("checkpoint", type=Path)
-    p.add_argument("--in-dist-start", type=int, default=1_000_000)
-    p.add_argument("--in-dist-end", type=int, default=1_200_000)
-    p.add_argument("--ood-start", type=int, default=5_000_000)
-    p.add_argument("--ood-end", type=int, default=5_200_000)
-    args = p.parse_args()
-
-    out = args.checkpoint.parent
-    model, cfg = load_model(args.checkpoint)
+def evaluate_checkpoint(
+    checkpoint: Path,
+    in_dist: tuple[int, int] = (1_000_000, 1_200_000),
+    ood: tuple[int, int] = (5_000_000, 5_200_000),
+) -> dict:
+    """Evaluate a checkpoint on the given ranges; write artifacts + registry KPIs."""
+    out = checkpoint.parent
+    model, cfg = load_model(checkpoint)
     oracle = PrimeOracle(cfg["n_max"])
     feature_fn = make_feature_fn(cfg["features"])
-    print(f"loaded {args.checkpoint} (features={feature_fn.names}, model={cfg['model']})")
+    print(f"loaded {checkpoint} (features={feature_fn.names}, model={cfg['model']})")
+
+    if in_dist[0] > cfg["n_max"] or ood[0] > cfg["n_max"]:
+        raise SystemExit(
+            f"eval ranges start beyond sieve n-max {cfg['n_max']:,} — pass ranges within it"
+        )
+    in_dist = (in_dist[0], min(in_dist[1], cfg["n_max"]))
+    ood = (ood[0], min(ood[1], cfg["n_max"]))
 
     results = {
-        "in_dist": eval_all(model, oracle, feature_fn, args.in_dist_start, args.in_dist_end),
-        "ood": eval_all(model, oracle, feature_fn, args.ood_start, args.ood_end),
+        "in_dist": eval_all(model, oracle, feature_fn, *in_dist),
+        "ood": eval_all(model, oracle, feature_fn, *ood),
     }
     for label, r in results.items():
         print(f"\n== {label} [{r['n'][0]:,}, {r['n'][-1]:,}] ==")
@@ -185,6 +191,22 @@ def main() -> None:
         append_record(registry, stub)
     print(f"report + plots written to {out}")
     print(f"eval KPIs attached to run {out.name} in {registry}")
+    return {"results": results, "fp": fp}
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("checkpoint", type=Path)
+    p.add_argument("--in-dist-start", type=int, default=1_000_000)
+    p.add_argument("--in-dist-end", type=int, default=1_200_000)
+    p.add_argument("--ood-start", type=int, default=5_000_000)
+    p.add_argument("--ood-end", type=int, default=5_200_000)
+    args = p.parse_args()
+    evaluate_checkpoint(
+        args.checkpoint,
+        (args.in_dist_start, args.in_dist_end),
+        (args.ood_start, args.ood_end),
+    )
 
 
 if __name__ == "__main__":
