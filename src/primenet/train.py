@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import time
 from pathlib import Path
 
@@ -71,7 +72,7 @@ def main() -> None:
     device = "cpu"
     out = Path(args.out) if args.out else Path("runs") / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
-    (out / "config.json").write_text(json.dumps(vars(args), indent=2))
+    (out / "config.json").write_text(json.dumps({**vars(args), "host": socket.gethostname()}, indent=2))
 
     print(f"torch {torch.__version__} | threads {torch.get_num_threads()} | out {out}")
     oracle = PrimeOracle(args.n_max)

@@ -52,6 +52,8 @@ def backfill(registry: Path) -> None:
                 "fp": em.get("fp"),
             }
         rec = make_record(d.name, cfg, None, None, None, None, val, tag=cfg.get("tag", ""))
+        if cfg.get("host"):
+            rec["host"] = cfg["host"]  # keep the machine that actually ran it
         rec["eval"] = eval_rec
         records[d.name] = rec
         added += 1
