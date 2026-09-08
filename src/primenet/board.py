@@ -45,9 +45,11 @@ def backfill(registry: Path) -> None:
         eval_file = d / "eval_metrics.json"
         if eval_file.exists():
             em = json.loads(eval_file.read_text())
+            near = em.get("near_ood", em.get("ood", {})).get("model")
             eval_rec = {
                 "in_dist": em.get("in_dist", {}).get("model"),
-                "ood": em.get("ood", {}).get("model"),
+                "near_ood": near,
+                "far_ood": em.get("far_ood", {}).get("model"),
                 "residue_rule": em.get("in_dist", {}).get("residue_rule"),
                 "fp": em.get("fp"),
             }

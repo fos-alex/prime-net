@@ -116,7 +116,6 @@ one line per run.
 ```bash
 python -m primenet.train --tag "my-tweak"    # train → auto-eval → track → dashboard
 python -m primenet.board --open              # regenerate + open the dashboard any time
-python -m primenet.board --open              # ...and open it in a browser
 python -m primenet.board --backfill          # one-time import of pre-registry runs
 ```
 
@@ -125,6 +124,13 @@ overview charts across runs (prime precision vs the residue rule, recalls, FP an
 with hover tooltips), a full run table, metric tiles per run, and a detail section per
 run with its confusion numbers, FP anatomy and training artifacts. Manual evaluation of
 old checkpoints still works: `python -m primenet.evaluate runs/<run>/model.pt`.
+
+Runs from other machines merge cleanly: `scripts/sync-cloud-runs.sh` rsyncs a VPS's
+`runs/` (excluding its registry and generated dashboard), backfills the local registry
+preserving each run's originating host, and refreshes the dashboard. Wired up as a
+systemd user timer (`prime-net-sync.timer`, every 5 min) the local dashboard stays
+current with cloud runs automatically. If you later outgrow this,
+`pip install mlflow && mlflow ui` is the standard upgrade path.
 
 ## Roadmap
 
