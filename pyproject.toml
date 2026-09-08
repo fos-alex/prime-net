@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 primenet-train = "primenet.train:main"
 primenet-eval = "primenet.evaluate:main"
+primenet-serve = "primenet.serve:main"
 
 [build-system]
 requires = ["setuptools>=68"]
