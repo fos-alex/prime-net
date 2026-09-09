@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from .data import PrimeOracle, sample_batch
 from .evaluate import evaluate_checkpoint
-from .features import BINARY_BITS, TOKEN_BITS, make_feature_fn
+from .features import BINARY_BITS, TOKEN_BITS, make_feature_fn, normalize_spec
 from .metrics import format_metrics, prf
 from .model import build_model
 from .predict import predict_range
@@ -61,6 +61,7 @@ def main() -> None:
     p.add_argument("--out", default=None, help="output dir (default runs/<timestamp>)")
     p.add_argument("--smoke", action="store_true", help="tiny config, end-to-end in ~1 min")
     args = p.parse_args()
+    args.features = normalize_spec(args.features)
 
     if args.smoke:
         args.n_max, args.train_max = 1_200_000, 400_000

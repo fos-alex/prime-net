@@ -72,6 +72,11 @@ def token_features(n: np.ndarray, primes: np.ndarray, rb: int = 12, pb: int = 12
     return np.concatenate([res_bits, p_bits], axis=2)
 
 
+def normalize_spec(spec: str) -> str:
+    """Accept the singular typo 'token' as 'tokens' everywhere."""
+    return "tokens" if spec == "token" else spec
+
+
 def make_feature_fn(spec: str, primes: np.ndarray | None = None, bits: tuple[int, int] = TOKEN_BITS):
     """Build a feature function from a spec.
 
@@ -83,6 +88,7 @@ def make_feature_fn(spec: str, primes: np.ndarray | None = None, bits: tuple[int
     The returned function carries .names, .dim, and for tokens also .primes
     and .chunk (a predict_range memory hint).
     """
+    spec = normalize_spec(spec)
     if spec == "tokens":
         if primes is None:
             raise ValueError("spec 'tokens' requires primes=")

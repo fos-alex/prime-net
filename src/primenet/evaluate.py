@@ -33,7 +33,7 @@ import torch
 from .baselines import all_composite_predict, residue_rule_predict
 from .data import PrimeOracle
 from .dissect import detection_by_smallest_factor
-from .features import TOKEN_BITS, make_feature_fn
+from .features import TOKEN_BITS, make_feature_fn, normalize_spec
 from .metrics import average_precision, format_metrics, precision_at_recall, prf
 from .model import build_model
 from .nt import factor_stats
@@ -54,6 +54,7 @@ def load_model(path: Path):
     model = build_model(cfg["model"], ckpt["in_dim"], hidden)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
+    cfg["features"] = normalize_spec(cfg.get("features", "all"))
     return model, cfg
 
 
