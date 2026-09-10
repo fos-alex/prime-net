@@ -23,7 +23,7 @@ import torch
 from .baselines import residue_rule_predict
 from .data import PrimeOracle
 from .evaluate import load_model
-from .features import BINARY_BITS, SMALL_PRIMES, make_feature_fn
+from .features import BINARY_BITS, SMALL_PRIMES, make_feature_fn, token_bits_from_config
 from .nt import factor_stats
 
 MAX_INPUTS = 64
@@ -222,7 +222,7 @@ class Probe:
         self.model, self.cfg = load_model(checkpoint)
         if self.cfg["features"] == "tokens":
             self.feature_fn = make_feature_fn(
-                "tokens", primes=self.cfg["train_primes"], bits=self.cfg.get("token_bits", (12, 12))
+                "tokens", primes=self.cfg["train_primes"], bits=token_bits_from_config(self.cfg)
             )
         else:
             self.feature_fn = make_feature_fn(self.cfg["features"])

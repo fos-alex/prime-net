@@ -1,6 +1,9 @@
 # Token sieve: implementation plan, targets, roadmap
 
-Status: proposal, 2026-09-08. Prototype validated as a scratch script (not committed):
+Status: implemented (commit 59992e1) and revised 2026-09-10: prime bits dropped from the
+token after the max-pool dilution finding (section 8). Tier 1 results in section 8.
+
+Original status, 2026-09-08. Prototype validated as a scratch script (not committed):
 DeepSet over per-prime tokens, trained on 25 primes for 300 steps, reached the sieve-depth
 ceiling at every inference-time prime set up to 997 (precision 1.000 at recall 1.0 on the
 in-dist range, 9 FPs at threshold 0.5, 9,729 params). Held-out primes were detected at 1.000.
@@ -144,6 +147,57 @@ Ordered by information per hour.
    natural candidate for the existing "train Python, serve Rust" roadmap item.
 7. **Speed.** Token features are one `[B, T]` modulo and a bit unpack; at T = 338 (far-OOD
    full depth) and B = 4096 that is 1.4M ints per batch. Profile before optimizing.
+
+## 8. Results (2026-09-10): prime bits dropped, Tier 1 met
+
+**Why the token changed.** Run 20260909-163522 (12 residue bits + 12 prime bits, 3,750
+steps) reached the ceiling in-dist and near-OOD but left 64 far-OOD false positives at
+full depth. Five primes in 1847..2039 had zero detection there, including 1847, which was
+a training prime. Probing the shared detector on single zero-residue tokens showed it
+fires for every prime up to 4093, but its confidence weakens as the prime's high bits are
+set (mean p(prime | residue 0) rises from 0.024 for the lowest band to 0.179 for the
+highest). With 338 tokens in play that weakened signal lost the max-pool: the same
+composites were detected at 1.00 with one token and at 0.00 once the primes up to 97
+were added. A scratch retrain with the prime bits masked, 600 steps, gave 0 FP / 0 FN at
+far-OOD full depth against 910 / 3,014 for the unmasked variant at the same step count.
+The token is now residue bits only (`TOKEN_BITS = (12, 0)`); `--token-bits 12,12`
+reproduces the old variant. Validation now runs at full depth, since at training-prime
+depth the ceiling was 0.34 and the curve was flat.
+
+**Tier 1 runs.** Three seeds, 3 epochs x 500 steps = 1,500 steps at batch 4096, default
+training primes (2, 3, 5, 7 + 21 random <= 4093). Runs 20260910-094243, -094444, -094644,
+tag `tier1-residue-only-s{0,1,2}`. Reproduce the table with
+`python scripts/summarize_seeds.py tier1-residue-only`.
+
+| range | depth | P@0.5 mean [min, max] | P@R.999 mean [min, max] | FP@0.5 per seed | rule P |
+|---|---|---|---|---|---|
+| in-dist | 97 | 0.6128 [0.6128, 0.6128] | 0.6129 [0.6129, 0.6130] | 2346, 2346, 2346 | 0.6128 |
+| in-dist | 199 | 0.7112 [0.7112, 0.7112] | 0.7112 [0.7112, 0.7113] | 1508, 1508, 1508 | 0.7112 |
+| in-dist | 499 | 0.8647 [0.8647, 0.8647] | 0.8647 [0.8647, 0.8647] | 581, 581, 581 | 0.8647 |
+| in-dist | full | 1.0000 [1.0000, 1.0000] | 1.0000 [1.0000, 1.0000] | 0, 0, 0 | 1.0000 |
+| near-OOD | 97 | 0.5975 [0.5975, 0.5975] | 0.5976 [0.5976, 0.5977] | 9727, 9727, 9727 | 0.5975 |
+| near-OOD | 199 | 0.6898 [0.6898, 0.6898] | 0.6899 [0.6899, 0.6899] | 6493, 6493, 6493 | 0.6898 |
+| near-OOD | 499 | 0.8326 [0.8326, 0.8326] | 0.8327 [0.8326, 0.8328] | 2903, 2903, 2903 | 0.8326 |
+| near-OOD | full | 1.0000 [1.0000, 1.0000] | 1.0000 [1.0000, 1.0000] | 0, 0, 0 | 1.0000 |
+| far-OOD | 97 | 0.5363 [0.5363, 0.5363] | 0.5364 [0.5363, 0.5364] | 11149, 11149, 11149 | 0.5363 |
+| far-OOD | 199 | 0.6163 [0.6163, 0.6163] | 0.6164 [0.6164, 0.6165] | 8028, 8028, 8028 | 0.6163 |
+| far-OOD | 499 | 0.7207 [0.7207, 0.7207] | 0.7207 [0.7207, 0.7207] | 4997, 4997, 4997 | 0.7207 |
+| far-OOD | full | 1.0000 [1.0000, 1.0000] | 1.0000 [1.0000, 1.0000] | 0, 0, 0 | 1.0000 |
+
+Held-out transfer: minimum detection over held-out primes with >= 20 examples is 1.0000
+in all three seeds (58 to 59 primes each). Recall at full depth is 1.0000 in all three.
+Full-depth validation is 1.0000 / 1.0000 after the first 500 steps in every seed, so
+1,500 steps is more than enough; the convergence point is somewhere between 300 and 500.
+
+**Against the targets.** Tier 0: met. Tier 1 (in-dist >= 0.99, near-OOD >= 0.98,
+far-OOD >= 0.95): met at 1.000 on all three, with zero variance across seeds. The
+far-OOD bit-width question (roadmap item 1) is answered as a by-product: the residue
+bits for primes up to 2,281 extrapolate with no loss.
+
+**What is left.** Precision is finished as a goal: at full depth the model is a complete
+sieve and the ceiling is 1.0. Roadmap item 2a (drop the prime bits) is done. Items 2b-2d
+(pooling, phi width, training prime count) are ablations of a solved problem and are
+optional. The open question is stage two, section 6 item 4.
 
 ## 7. Risks
 

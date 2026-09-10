@@ -113,11 +113,18 @@ that prime is the smallest factor. That is the staircase, and it stalls (17 afte
 in the legacy runs). The token sieve instead shares one detector across primes:
 
 ```
-n  ->  one token per prime p:  [ bits(n mod p) | bits(p) ]     (12 + 12 bits)
-       phi   : shared MLP, applied to every token    (24 -> 64 -> 64)
+n  ->  one token per prime p:  [ bits(n mod p) ]              (12 bits)
+       phi   : shared MLP, applied to every token    (12 -> 64 -> 64)
        pool  : element-wise max across tokens        ("any token fired")
-       rho   : MLP on the pooled vector              (64 -> 64 -> 1, ~10k params)
+       rho   : MLP on the pooled vector              (64 -> 64 -> 1, ~9k params)
 ```
+
+The token is the residue only. The first version also carried the prime's own bits; that
+let the detector's confidence drift with the prime's high bits, and at far-OOD full depth
+(338 tokens) five primes in 1847..2039 lost the max-pool to the other tokens and went
+undetected. Residue-only tokens make the detector prime-independent by construction
+(`--token-bits 12,12` reproduces the old variant). Per-epoch validation runs at full
+depth, since at training-prime depth the ceiling is ~0.34 and the curve is flat.
 
 Adding a prime at inference adds a token, not a weight: the prime set is a runtime knob
 and the precision ceiling moves with it. Train with
@@ -131,20 +138,24 @@ outside the network. And beating the residue rule at any depth above the trained
 baseline is a *construction consequence* of giving the model more primes, not a
 discovery about networks; the results to watch are held-out transfer and the ceiling.
 
-**Measured (3 seeds × 1,500 steps, batch 4096, mean precision at threshold 0.5):**
+**Measured (residue-only tokens, 3 seeds × 1,500 steps, batch 4096, precision at
+threshold 0.5, identical across seeds):**
 
-| range | depth 97 | depth 499 | full | P@R.999 (full) |
-|---|---|---|---|---|
-| in-dist [750k, 800k] | 0.613 (= rule, identical FPs) | 0.865 (= rule) | **0.993** | 1.000 |
-| near-OOD [1M, 1.2M] | – | – | **0.989** | 0.996 |
-| far-OOD [5M, 5.2M] | – | – | **0.968** | 0.978 |
+| range | depth 97 | depth 199 | depth 499 | full | P@R.999 (full) |
+|---|---|---|---|---|---|
+| in-dist [750k, 800k] | 0.613 (= rule) | 0.711 (= rule) | 0.865 (= rule) | **1.000** | 1.000 |
+| near-OOD [1M, 1.2M] | 0.598 (= rule) | 0.690 (= rule) | 0.833 (= rule) | **1.000** | 1.000 |
+| far-OOD [5M, 5.2M] | 0.536 (= rule) | 0.616 (= rule) | 0.721 (= rule) | **1.000** | 1.000 |
 
-Held-out prime transfer: detection **1.000** on every held-out prime with ≥ 20 examples,
-all 3 seeds. At every depth the model converges to the *exact* sieve for that depth —
-identical confusion counts to the explicit rule — and extrapolates the shared detector
-to 338 unseen primes at far-OOD. Targets, gates and next steps (bit-width
-extrapolation, ablations, stage two: divisibility from the bits of n):
-`docs/token-sieve-plan.md`.
+At every depth the model is the *exact* sieve for that depth: false-positive counts are
+identical to the explicit rule in all three seeds, zero at full depth on all three
+ranges (338 tokens at far-OOD, 313 of them primes never seen in training). Held-out
+prime transfer: detection **1.000** on every held-out prime with ≥ 20 examples, all
+seeds. Full-depth validation is already perfect after 500 steps. The earlier
+12+12-bit variant reached 0.993 / 0.989 / 0.968 here; the far-OOD gap was the max-pool
+dilution described above. Reproduce with `python scripts/summarize_seeds.py
+tier1-residue-only`. Targets, the dilution analysis, and next steps (stage two:
+divisibility from the bits of n): `docs/token-sieve-plan.md`.
 
 ## Tracking progress across runs (mini ML Ops)
 

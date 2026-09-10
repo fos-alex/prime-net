@@ -19,6 +19,23 @@ def test_sieve_gives_pi_of_1e6():
     assert len(PrimeOracle(10**6).primes) == 78_498
 
 
+def test_token_bits_default_is_residue_only():
+    primes = np.array([2, 5, 97])
+    toks = token_features(np.array([13, 100]), primes)
+    assert toks.shape == (2, 3, 12)
+    for row, n in enumerate([13, 100]):
+        for col in range(3):
+            assert sum(int(toks[row, col, k]) << k for k in range(12)) == n % primes[col]
+
+
+def test_token_bits_from_config_fallbacks():
+    from primenet.features import TOKEN_BITS, token_bits_from_config
+
+    assert token_bits_from_config({"token_bits": [12, 12]}) == (12, 12)
+    assert token_bits_from_config({"in_dim": 24}) == (12, 12)  # pre-flag checkpoints
+    assert token_bits_from_config({"in_dim": 12}) == TOKEN_BITS
+
+
 def test_token_bits_roundtrip():
     primes = np.array([2, 5, 97])
     toks = token_features(np.array([13, 100]), primes, rb=12, pb=12)
@@ -122,7 +139,8 @@ def test_factor_stats_matches_sympy():
 
 def test_make_feature_fn_contract():
     fn = make_feature_fn("tokens", primes=SMALL_PRIMES[:5])
-    assert fn.names == ["tokens"] and fn.dim == 24 and fn.primes is not None
+    assert fn.names == ["tokens"] and fn.dim == 12 and fn.primes is not None
+    assert make_feature_fn("tokens", primes=SMALL_PRIMES[:5], bits=(12, 12)).dim == 24
     assert fn.chunk > 0
     with pytest.raises(ValueError):
         make_feature_fn("tokens,residues", primes=SMALL_PRIMES[:5])

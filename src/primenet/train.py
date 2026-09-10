@@ -23,7 +23,7 @@ import torch.nn as nn
 from tqdm import tqdm
 
 from .data import PrimeOracle, sample_batch
-from .evaluate import evaluate_checkpoint
+from .evaluate import evaluate_checkpoint, primes_for_depth
 from .features import BINARY_BITS, TOKEN_BITS, make_feature_fn, normalize_spec
 from .metrics import format_metrics, prf
 from .model import build_model
@@ -57,6 +57,8 @@ def main() -> None:
     p.add_argument("--eval-near-ood-end", type=int, default=1_200_000)
     p.add_argument("--eval-far-ood-start", type=int, default=5_000_000, help="far beyond the training range")
     p.add_argument("--eval-far-ood-end", type=int, default=5_200_000)
+    p.add_argument("--token-bits", default=",".join(map(str, TOKEN_BITS)),
+                   help="token models: residue_bits,prime_bits (default 12,0; 12,12 reproduces the original variant)")
     p.add_argument("--compile", action="store_true", help="torch.compile (slow warmup, faster steps)")
     p.add_argument("--out", default=None, help="output dir (default runs/<timestamp>)")
     p.add_argument("--smoke", action="store_true", help="tiny config, end-to-end in ~1 min")
@@ -87,12 +89,22 @@ def main() -> None:
         n_random = max(args.train_primes_count - len(always), 0)
         picked = rng.choice(pool[~np.isin(pool, always)], size=n_random, replace=False)
         train_primes = np.sort(np.concatenate([always, picked]))
-        feature_fn = make_feature_fn("tokens", primes=train_primes)
+        token_bits = tuple(int(v) for v in str(args.token_bits).split(","))
+        if len(token_bits) != 2:
+            raise SystemExit("--token-bits expects two ints, e.g. 12,0")
+        feature_fn = make_feature_fn("tokens", primes=train_primes, bits=token_bits)
         args.train_primes = [int(p) for p in train_primes]
-        args.token_bits = list(TOKEN_BITS)
+        args.token_bits = list(token_bits)
+        # validate at FULL depth (all primes <= sqrt(val_max)): at training-prime depth the
+        # ceiling is ~0.34 and the curve is flat, so it cannot show convergence
+        val_feature_fn = make_feature_fn(
+            "tokens", primes=primes_for_depth(oracle, "full", args.val_max), bits=token_bits
+        )
+        val_depth = f"full ({len(val_feature_fn.primes)} primes)"
         print(f"train primes ({len(train_primes)}): {train_primes.tolist()}")
     else:
         feature_fn = make_feature_fn(args.features)
+        val_feature_fn, val_depth = feature_fn, None
     if feature_fn.primes is not None and args.model != "deepset":
         raise SystemExit("--features tokens requires --model deepset (rank-3 token input)")
     if "binary" in feature_fn.names and args.n_max >= 2**BINARY_BITS:
@@ -129,12 +141,13 @@ def main() -> None:
             seen += len(x)
             bar.set_postfix(loss=f"{loss:.4f}", sps=f"{seen / (time.time() - t0):,.0f}/s")
 
-        yv, pv = predict_range(raw_model, oracle, feature_fn, args.val_min, args.val_max)
+        yv, pv = predict_range(raw_model, oracle, val_feature_fn, args.val_min, args.val_max)
         vm = prf(yv, pv)
         val_history.append(vm)
         total_samples += seen
         total_time += time.time() - t0
-        print(f"[val {args.val_min:,}-{args.val_max:,}] {format_metrics('model', vm)}")
+        depth_note = f" depth {val_depth}" if val_depth else ""
+        print(f"[val {args.val_min:,}-{args.val_max:,}{depth_note}] {format_metrics('model', vm)}")
 
     torch.save(
         {
@@ -145,7 +158,9 @@ def main() -> None:
         },
         out / "model.pt",
     )
-    (out / "metrics.json").write_text(json.dumps({"val_history": val_history}, indent=2))
+    (out / "metrics.json").write_text(
+        json.dumps({"val_history": val_history, "val_depth": val_depth}, indent=2)
+    )
 
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(losses, lw=0.4, alpha=0.4)

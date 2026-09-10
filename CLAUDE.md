@@ -21,6 +21,7 @@ python -m primenet.train --epochs 3          # real run, minutes per epoch on 8 
 python -m primenet.evaluate runs/<ts>/model.pt   # train.py also runs this automatically
 python -m primenet.board                        # table + runs/progress/index.html dashboard
 python -m primenet.serve                        # interactive probe on :8000 (newest checkpoint)
+python -m pytest -q tests/                      # unit tests (needs: pip install -e '.[dev]')
 
 # encoding ablation (the main open experiment)
 python -m primenet.train --features residues --epochs 3
@@ -29,9 +30,11 @@ python -m primenet.train --features binary,fourier --model cnn
 
 Console scripts `primenet-train` / `primenet-eval` / `primenet-serve` are equivalent entry points.
 
-There is **no test suite and no linter configured**. `--smoke` is the verification path:
-it shrinks `n_max`, ranges, epochs and steps so the whole train pipeline runs in about a
-minute. Run it after touching anything in the data → features → model → train chain.
+`tests/test_primenet.py` covers the sieve, the encodings, factorization (against sympy)
+and the feature-function contract; there is no linter configured. Tests do not exercise
+training, so `--smoke` is still the end-to-end check: it shrinks `n_max`, ranges, epochs
+and steps so the whole pipeline runs in about a minute. Run both after touching anything
+in the data → features → model → train chain.
 
 ## Architecture
 
@@ -79,7 +82,9 @@ then test in-distribution `[7.5e5, 8e5]` (inside the training range), near-OOD
 the in-dist → far-OOD gap is what distinguishes "learned modular arithmetic" from
 "learned the statistics of the training range."
 
-For token models, **prime depth is part of that discipline**: training primes
+For token models, **prime depth is part of that discipline**: tokens are residue bits
+only (`--token-bits 12,0`; the prime bits of the first version caused max-pool dilution
+at far-OOD and were dropped), per-epoch validation runs at full depth, training primes
 (`2,3,5,7` + K random ≤ 4093) are a runtime knob, evaluation sweeps inference depth
 (`--eval-primes-max 97,199,499,full`), and per-prime detection on held-out primes is
 the transfer test. Registry `in_dist` is the first depth (97) for legacy comparability;
@@ -105,7 +110,14 @@ is a consequence of giving the model more primes, and is reported as such.
 
 ## In flight
 
-The remaining roadmap items are in README.md; the encoding ablation is the main open
-experiment. Current standing: the model reaches prime precision ~0.40 against the residue
-rule's ~0.60 — it has **not** beaten the baseline yet, which is a result worth preserving,
-not a bug to fix.
+Legacy encodings (binary / residues / fourier): the MLP reaches prime precision ~0.42
+against the residue rule's ~0.61 and has **not** beaten the baseline, which is a result
+worth preserving, not a bug to fix. It learns divisibility one prime at a time and stalls
+around 17 after 3 epochs.
+
+Token sieve: Tier 1 of `docs/token-sieve-plan.md` is met (2026-09-10, 3 seeds, residue-only
+tokens): precision 1.000 at full depth on in-dist, near-OOD and far-OOD, identical FP
+counts to the explicit rule at every depth, held-out prime detection 1.000. Precision is
+finished as a goal for this model. The open experiment is **stage two**: `[bits(n) |
+bits(p)]` tokens where the shared network must compute divisibility itself (plan
+section 6, item 4). `scripts/summarize_seeds.py <tag-prefix>` aggregates seed runs.
